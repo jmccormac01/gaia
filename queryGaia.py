@@ -1,10 +1,17 @@
 """
 Script to query the GAIA catalogue for parallaxes
+
+Modified version of queryGaia to use output paramfit
+file from Barry Smalley
 """
 import os
 import re
 import argparse as ap
-from collections import OrderedDict
+from collections import (
+    OrderedDict,
+    defaultdict
+    )
+import pymysql
 import astropy.units as u
 from astropy.coordinates import SkyCoord, Angle
 from astroquery.vizier import Vizier
@@ -35,16 +42,6 @@ def argParse():
     None
     """
     parser = ap.ArgumentParser()
-    parser.add_argument('swasp_id',
-                        help='swasp_id to cross match with GAIA. This '
-                             'can also be a path to a text file containing a '
-                             'swasp_id and IRFM theta pair per line. If theta is '
-                             'unknown, insert a minus number instead')
-    parser.add_argument('--theta',
-                        help='IRFM theta value (mas). If supplying swasp_ids in a text '
-                             'file put the corresponding theta value on the same '
-                             'line as the swasp_id separated by a space. Insert a '
-                             'minus number if theta is unknown')
     parser.add_argument('--radius',
                         help='search radius in arcsec',
                         type=int,
@@ -113,15 +110,18 @@ def queryGaiaAroundSwaspId(swasp_id, radius):
         results = vizier.query_region(coordinates,
                                       radius=Angle(radius*u.arcsec),
                                       catalog=GAIA_CATALOGUE_ID)
-        for result in results[0]:
-            objects[result['Source']] = {'tyc': result['TYC'],
-                                         'hip': result['HIP'],
-                                         'ra': round(float(result['_RAJ2000']), 8),
-                                         'dec': round(float(result['_DEJ2000']), 8),
-                                         'plx': round(float(result['Plx']), 4),
-                                         'eplx': round(float(result['e_Plx']), 4),
-                                         'pmra': round(float(result['pmRA']), 4),
-                                         'pmdec': round(float(result['pmDE']), 4)}
+        try:
+            for result in results[0]:
+                objects[result['Source']] = {'tyc': result['TYC'],
+                                             'hip': result['HIP'],
+                                             'ra': round(float(result['_RAJ2000']), 8),
+                                             'dec': round(float(result['_DEJ2000']), 8),
+                                             'plx': round(float(result['Plx']), 4),
+                                             'eplx': round(float(result['e_Plx']), 4),
+                                             'pmra': round(float(result['pmRA']), 4),
+                                             'pmdec': round(float(result['pmDE']), 4)}
+        except (TypeError, IndexError):
+            print('No match in GAIA for {}...'.format(swasp_id))
     return objects
 
 def rStar(theta, parallax):
@@ -147,49 +147,74 @@ def rStar(theta, parallax):
     r_star = 214.9*(theta/2.)/parallax
     return r_star
 
+def getParamfitResults():
+    """
+    Grab the swasp_id and theta values from the database
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    None
+    """
+    swasp_ids, thetas, chi2s, residuals = [], [], [], []
+    qry = """
+        SELECT swasp_id, theta, chi2, residuals
+        FROM paramfit
+         """
+    with pymysql.connect(host='localhost', db='eblm', password='mysqlpassword') as cur:
+        cur.execute(qry)
+        for row in cur:
+            swasp_ids.append(row[0])
+            thetas.append(row[1])
+            chi2s.append(row[2])
+            residuals.append(row[3])
+    return swasp_ids, thetas, chi2s, residuals
+
 if __name__ == "__main__":
     args = argParse()
-    swasp_ids, thetas = [], []
+    swasp_ids, thetas, chi2s, residuals = getParamfitResults()
     matches = OrderedDict()
-    if os.path.exists(args.swasp_id):
-        f = open(args.swasp_id, 'r').readlines()
-        for line in f:
-            obj, theta = line.split()
-            swasp_ids.append(obj)
-            if float(theta) > 0:
-                thetas.append(float(theta))
-            else:
-                thetas.append(None)
-    else:
-        swasp_ids = [args.swasp_id]
-        if args.theta:
-            thetas = [args.theta]
-        else:
-            thetas = [None]
-
+    giants = defaultdict(dict)
     # loop over the objects and get the matches
     # and r_stars for any matches
-    for swasp_id, theta in zip(swasp_ids, thetas):
+    for swasp_id, theta, chi2, resid in zip(swasp_ids, thetas, chi2s, residuals):
         print('\nQuerying GAIA for {}:'.format(swasp_id))
-        print('ID                   TYC        RA           DEC          '
-              'PMRA      PMDEC  PLX    ePLX   RSTAR')
+        print('ID                   TYC         RA            DEC           '
+              'PMRA      PMDEC     PLX       ePLX      THETA     CHI2      RESID     RSTAR')
         matches[swasp_id] = queryGaiaAroundSwaspId(swasp_id, args.radius)
+        # put a warning when theta might be bad
+        if chi2 > 3 or resid > 0.2:
+            token = '*'
+        else:
+            token = ''
         for match in matches[swasp_id]:
             parallax = matches[swasp_id][match]['plx']
-            if theta:
-                r_star = rStar(theta, parallax)
-                matches[swasp_id][match]['rstar'] = round(float(r_star), 4)
-            else:
-                matches[swasp_id][match]['rstar'] = -1
-        print("{:<20} {:<10} {:<12} {:<12} {:<9} \
-              {:<6} {:<6} {:<6} {:<6}".format(match,
-                                              matches[swasp_id][match]['tyc'].decode('ascii'),
-                                              matches[swasp_id][match]['ra'],
-                                              matches[swasp_id][match]['dec'],
-                                              matches[swasp_id][match]['pmra'],
-                                              matches[swasp_id][match]['pmdec'],
-                                              matches[swasp_id][match]['plx'],
-                                              matches[swasp_id][match]['eplx'],
-                                              matches[swasp_id][match]['rstar']))
+            r_star = rStar(theta, parallax)
+            if token == '' and r_star >= 2.0:
+                giants[swasp][match] = r_star
+            matches[swasp_id][match]['rstar'] = round(float(r_star), 4)
+            matches[swasp_id][match]['theta'] = round(float(theta), 4)
+            matches[swasp_id][match]['chi2'] = round(float(chi2), 4)
+            matches[swasp_id][match]['resid'] = round(float(resid), 4)
+            print("{:<20} {:<11} {:<13} {:<13} {:<9} {:<9} {:<9} {:<9} {:<9} {:<9} {:<9} {:<9}{}".format(match,
+                                matches[swasp_id][match]['tyc'].decode('ascii'),
+                                matches[swasp_id][match]['ra'],
+                                matches[swasp_id][match]['dec'],
+                                matches[swasp_id][match]['pmra'],
+                                matches[swasp_id][match]['pmdec'],
+                                matches[swasp_id][match]['plx'],
+                                matches[swasp_id][match]['eplx'],
+                                matches[swasp_id][match]['theta'],
+                                matches[swasp_id][match]['chi2'],
+                                matches[swasp_id][match]['resid'],
+                                matches[swasp_id][match]['rstar'],
+                                token))
 
 
