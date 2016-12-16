@@ -178,27 +178,64 @@ def getParamfitResults():
     return swasp_ids, thetas, chi2s, residuals
 
 if __name__ == "__main__":
+    # parse the command line args
     args = argParse()
-    swasp_ids, thetas, chi2s, residuals = getParamfitResults()
+    # open database connection
+    db = pymysql.connect(host='localhost', db='eblm', password='mysqlpassword')
+    # hold the output data
     matches = OrderedDict()
-    giants = defaultdict(dict)
+    n_gaia_matches = {}
+    swasp_ids, thetas, chi2s, residuals = getParamfitResults()
+
     # loop over the objects and get the matches
     # and r_stars for any matches
     for swasp_id, theta, chi2, resid in zip(swasp_ids, thetas, chi2s, residuals):
         print('\nQuerying GAIA for {}:'.format(swasp_id))
         print('ID                   TYC         RA            DEC           '
               'PMRA      PMDEC     PLX       ePLX      THETA     CHI2      RESID     RSTAR')
+
         matches[swasp_id] = queryGaiaAroundSwaspId(swasp_id, args.radius)
+        n_gaia_matches[swasp_id] = len(matches[swasp_id])
+
         # put a warning when theta might be bad
         if chi2 > 3 or resid > 0.2:
-            token = '*'
+            token = '?'
         else:
             token = ''
+
         for match in matches[swasp_id]:
             parallax = matches[swasp_id][match]['plx']
             r_star = rStar(theta, parallax)
-            if token == '' and r_star >= 2.0:
-                giants[swasp][match] = r_star
+            if r_star >= 2.0:
+                giant_flag = 'giant'
+            else:
+                giant_flag = 'dwarf'
+            # add the ? token if chi2 or residual too large to be sure
+            giant_flag = giant_flag + token
+            # check for multiple matches, if more than 1 just put the number of matches in the db table
+            # those with >1 will need looked at separately
+            if n_gaia_matches[swasp_id] == 1:
+                qry = """
+                    UPDATE eblm_parameters
+                    SET n_gaia_matches = {},
+                    r_star = {},
+                    giant_flag = '{}'
+                    WHERE swasp_id = '{}'
+                    """.format(n_gaia_matches[swasp_id],
+                               round(float(r_star), 3),
+                               giant_flag,
+                               swasp_id)
+            else:
+                qry = """
+                    UPDATE eblm_parameters
+                    SET n_gaia_matches = {}
+                    WHERE swasp_id = '{}'
+                    """.format(n_gaia_matches[swasp_id],
+                               swasp_id)
+            with db.cursor() as cur:
+                cur.execute(qry)
+                db.commit()
+
             matches[swasp_id][match]['rstar'] = round(float(r_star), 4)
             matches[swasp_id][match]['theta'] = round(float(theta), 4)
             matches[swasp_id][match]['chi2'] = round(float(chi2), 4)
@@ -216,5 +253,6 @@ if __name__ == "__main__":
                                 matches[swasp_id][match]['resid'],
                                 matches[swasp_id][match]['rstar'],
                                 token))
-
+            print(qry)
+    db.close()
 
