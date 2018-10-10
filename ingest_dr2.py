@@ -25,9 +25,9 @@ import glob as g
 import pymysql
 
 top_dir = "/wasp/scratch/gaia_dr2"
+os.chdir(top_dir)
 files_to_ingest = sorted(g.glob("*.csv"))
 nfiles = len(files_to_ingest)
-os.chdir(top_dir)
 for i, file_to_ingest in enumerate(files_to_ingest[:100]):
     qry = """
             LOAD DATA LOCAL INFILE '{}'
