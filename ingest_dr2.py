@@ -12,7 +12,7 @@ Two columns in the table are sepecified as true/false
 and need to be converted to 1/0 when ingesting. This is
 done using the @dummy1 and @dummy2 entries below
 
-LOAD DATA INFILE '/path/to/csv_file.csv'
+LOAD DATA LOCAL INFILE '/path/to/csv_file.csv'
 INTO TABLE gaia_dr2
 FIELDS TERMINATED BY ','
 LINES TERMINATED BY '\n'
@@ -29,7 +29,7 @@ file_to_ingest = "GaiaSource_999922404314639104_1000172126596665472.csv"
 os.chdir(top_dir)
 
 qry = """
-        LOAD DATA INFILE '{}'
+        LOAD DATA LOCAL INFILE '{}'
         INTO TABLE gaia_dr2
         FIELDS TERMINATED BY ','
         LINES TERMINATED BY '\n'
