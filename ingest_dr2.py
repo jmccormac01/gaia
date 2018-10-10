@@ -61,5 +61,7 @@ qry = """
         SET astrometric_primary_flag := @dummy1 = 'true', duplicated_source := @dummy2 = 'true';
     """.format(file_to_ingest)
 
-with pymysql.connect(host='ngtsdb', db='catalogues') as cur:
+with pymysql.connect(host='ngtsdb',
+                     db='catalogues',
+                     local_infile=True) as cur:
     cur.execute(qry)
