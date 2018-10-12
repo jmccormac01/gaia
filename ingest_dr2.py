@@ -21,9 +21,6 @@ os.chdir(top_dir)
 files_to_ingest = sorted(g.glob("*.csv"))
 nfiles = len(files_to_ingest)
 for i, file_to_ingest in enumerate(files_to_ingest[61105:]):
-    qry1 = """
-            SET sql_log_bin=off
-           """
     qry2 = """
             LOAD DATA LOCAL INFILE '{}'
             INTO TABLE gaia_dr2
@@ -59,6 +56,5 @@ for i, file_to_ingest in enumerate(files_to_ingest[61105:]):
     with pymysql.connect(host='ngtsdb',
                          db='catalogues',
                          local_infile=True) as cur:
-        cur.execute(qry1)
         cur.execute(qry2)
     print("[{}:{}]".format(i+1, nfiles))
